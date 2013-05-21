@@ -16,16 +16,18 @@
 (function() {
 	'use strict';
 
-	var url, page, timeout,
+	var page, timeout,
+		fs = require('fs'),
 		args = require('system').args;
-
+	
 	// arg[0]: scriptName, args[1...]: arguments
 	if (args.length < 2 || args.length > 3) {
 		console.error('Usage:\n  phantomjs runner.js [url-of-your-qunit-testsuite] [timeout-in-seconds]');
 		phantom.exit(1);
 	}
-
-	url = args[1];
+	
+	var url = args[1];
+	
 	page = require('webpage').create();
 	if (args[2] !== undefined) {
 		timeout = parseInt(args[2], 10);
@@ -37,18 +39,116 @@
 	};
 
 	page.onInitialized = function() {
+		var addLogging = function() {
+			window.document.addEventListener('DOMContentLoaded', function() {
+				var testsPassed = 0,
+					testsFailed = 0,
+					module, moduleStart, testStart, testCases = [],
+					current_test_assertions = [],
+					junitxml = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n';
+				QUnit.testStart(function() {
+					testStart = new Date();
+				});
+	
+				QUnit.moduleStart(function(context) {
+					moduleStart = new Date();
+					module = context.name;
+					testCases = [];
+				});
+	
+				QUnit.moduleDone(function(context) {
+					// context = { name, failed, passed, total }
+					var xml = '\t<testsuite name="' + context.name + '" errors="0" failures="' + context.failed + '" tests="' + context.total + '" time="' + (new Date() - moduleStart) / 1000 + '"';
+					if (testCases.length) {
+						xml += '>\n';
+						for (var i = 0, l = testCases.length; i < l; i++) {
+							xml += testCases[i];
+						}
+						xml += '\t</testsuite>\n';
+					} else {
+						xml += '/>\n';
+					}
+					junitxml += xml;
+				});
+	
+				QUnit.testDone(function(result) {
+					if (0 === result.failed) {
+						testsPassed++;
+					} else {
+						testsFailed++;
+					}
+	
+					console.log('\t' + result.name + ' completed - ' + (0 === result.failed ? 'PASS' : 'FAIL ***'));
+					
+					var xml = '\t\t<testcase classname="' + module + '" name="' + result.name + '" time="' + (new Date() - testStart) / 1000 + '"';
+					if (result.failed) {
+						xml += '>\n';
+						for (var i = 0; i < current_test_assertions.length; i++) {
+							xml += "\t\t\t" + current_test_assertions[i];
+						}
+						xml += '\t\t</testcase>\n';
+					} else {
+						xml += '/>\n';
+					}
+					current_test_assertions = [];
+	
+					testCases.push(xml);
+	
+				});
+	
+				QUnit.done(function(result) {
+					console.log(testsPassed + ' of ' + (testsPassed + testsFailed) + ' tests successful.');
+					console.log('==== TEST RUN COMPLETED - ' + (0 === testsFailed ? 'PASS' : 'FAIL') + '===');
+
+					junitxml += '</testsuites>';
+					
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.done',
+							'data': result,
+							'report': junitxml
+						});
+					}
+				});
+	
+				QUnit.log = function(details) {
+					//details = { result , actual, expected, message }
+					if (details.result) {
+						return;
+					}
+					var message = details.message || "";
+					if (details.expected) {
+						if (message) {
+							message += ", ";
+						}
+						message = "expected: " + details.expected + ", but was: " + details.actual;
+					}
+					var xml = '<failure type="failed" message="' + details.message.replace(/ - \{((.|\n)*)\}/, "") + '"/>\n';
+	
+					current_test_assertions.push(xml);
+				};
+			}, false);
+		};
+
 		page.evaluate(addLogging);
 	};
 
 	page.onCallback = function(message) {
 		var result,
+			report,
 			failed;
 
 		if (message) {
 			if (message.name === 'QUnit.done') {
 				result = message.data;
+				report = message.report;
 				failed = !result || result.failed;
 
+
+				var fileName = "../../../build/web-test-reports/" + url.replace(/\//g,'_').replace(/:/g,'_') + '.xml';
+				fs.write(fileName, report, "w");
+
+				
 				phantom.exit(failed ? 1 : 0);
 			}
 		}
@@ -75,65 +175,8 @@
 				}, timeout * 1000);
 			}
 
-			// Do nothing... the callback mechanism will handle everything!
+			// Do nothing... the callback mechanism will handle everything!	
 		}
 	});
 
-	function addLogging() {
-		window.document.addEventListener('DOMContentLoaded', function() {
-			var currentTestAssertions = [];
-
-			QUnit.log(function(details) {
-				var response;
-
-				// Ignore passing assertions
-				if (details.result) {
-					return;
-				}
-
-				response = details.message || '';
-
-				if (typeof details.expected !== 'undefined') {
-					if (response) {
-						response += ', ';
-					}
-
-					response += 'expected: ' + details.expected + ', but was: ' + details.actual;
-				}
-
-				if (details.source) {
-					response += "\n" + details.source;
-				}
-
-				currentTestAssertions.push('Failed assertion: ' + response);
-			});
-
-			QUnit.testDone(function(result) {
-				var i,
-					len,
-					name = result.module + ': ' + result.name;
-
-				if (result.failed) {
-					console.log('Test failed: ' + name);
-
-					for (i = 0, len = currentTestAssertions.length; i < len; i++) {
-						console.log('    ' + currentTestAssertions[i]);
-					}
-				}
-
-				currentTestAssertions.length = 0;
-			});
-
-			QUnit.done(function(result) {
-				console.log('Took ' + result.runtime +  'ms to run ' + result.total + ' tests. ' + result.passed + ' passed, ' + result.failed + ' failed.');
-
-				if (typeof window.callPhantom === 'function') {
-					window.callPhantom({
-						'name': 'QUnit.done',
-						'data': result
-					});
-				}
-			});
-		}, false);
-	}
 })();
