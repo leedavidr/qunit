@@ -187,7 +187,7 @@
 
 				testCases.push(xml);
 			} else if (message.name === 'QUnit.moduleDone') {
-				var xml = '\t<testsuite name="' + module + '" errors="0" failures="' + message.context.failed + '" tests="' + message.context.total + '" time="' + (message.now - moduleStart) / 1000 + '"';
+				var xml = '\t<testsuite name="' + escapedUrl + '" errors="0" failures="' + message.context.failed + '" tests="' + message.context.total + '" time="' + (message.now - moduleStart) / 1000 + '"';
 				
 				if (testCases.length) {
 					xml += '>\n';
@@ -227,6 +227,10 @@
 	page.open(url, function(status) {
 		if (status !== 'success') {
 			console.error('Unable to access network: ' + status);
+			
+			var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<failure type="failed" message="Network error, web application is not accessible."/>\n</testcase>\n</testsuite>\n</testsuites>';
+			fs.write(fileName, report, "w");
+			
 			phantom.exit(1);
 		} else {
 			// Cannot do this verification with the 'DOMContentLoaded' handler because it
@@ -234,6 +238,10 @@
 			var qunitMissing = page.evaluate(function() { return (typeof QUnit === 'undefined' || !QUnit); });
 			if (qunitMissing) {
 				console.error('The `QUnit` object is not present on this page.');
+				
+				var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<failure type="failed" message="QUnit error, web application does not have a QUnit object.  Check whether the URL is pointed to a QUnit test."/>\n</testcase>\n</testsuite>\n</testsuites>';
+				fs.write(fileName, report, "w");
+				
 				phantom.exit(1);
 			}
 
@@ -241,7 +249,7 @@
 			if (typeof timeout === 'number') {
 				setTimeout(function() {
 					console.error('The specified timeout of ' + timeout + ' seconds has expired. Aborting...');
-					var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="' + timeout + '">\n<testcase classname="' + escapedUrl + '" name="test timed out" time="' + timeout + '">\n<failure type="failed" message="Test suite timed out, see console logs for details"/>\n</testcase>\n</testsuite>\n</testsuites>';
+					var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="' + timeout + '">\n<testcase classname="' + escapedUrl + '" name="Test Suite Timed Out" time="' + timeout + '">\n<failure type="failed" message="Test suite timed out, see console logs for details"/>\n</testcase>\n</testsuite>\n</testsuites>';
 					fs.write(fileName, report, "w");
 					phantom.exit(1);
 				}, timeout * 1000);
