@@ -27,105 +27,104 @@
 	}
 	
 	var url = args[1];
+	var escapedUrl = url.replace(/\//g,'_').replace(/:/g,'_') + '.xml';
+	var fileName = "../../../build/web-test-reports/" + escapedUrl;
+
+	console.log("\n\n==================================================================================\nSTARTING TESTS FOR - " + url);
 	
 	page = require('webpage').create();
 	if (args[2] !== undefined) {
 		timeout = parseInt(args[2], 10);
 	}
 
-	// Route `console.log()` calls from within the Page context to the main Phantom context (i.e. current `this`)
-	page.onConsoleMessage = function(msg) {
-		console.log(msg);
+	page.onConsoleMessage = function(msg, lineNum, sourceId) {
+		console.log("> " + msg);
+		if (typeof lineNum !== 'undefined') {
+			console.log('-- line #' + lineNum);
+		}
+		if (typeof sourceId !== 'undefined') {
+			console.log('-- sourceId: ' + sourceId);
+		}
+	};
+
+	page.onError = function(msg, trace) {
+    		var msgStack = ['ERROR: ' + msg];
+	    	if (trace && trace.length) {
+	        	msgStack.push('TRACE:');
+	    	    trace.forEach(function(t) {
+        		    msgStack.push(' -> ' + t.file + ': ' + t.line + (t.function ? ' (in function "' + t.function + '")' : ''));
+	        	});
+   			}
+	    	console.error(msgStack.join('\n'));
+	};
+	
+	page.onResourceError = function(resourceError) {
+    		console.log('Unable to load resource (URL:' + resourceError.url + ')');
+    		console.log('Error code: ' + resourceError.errorCode + '. Description: ' + resourceError.errorString);
 	};
 
 	page.onInitialized = function() {
 		var addLogging = function() {
 			window.document.addEventListener('DOMContentLoaded', function() {
-				var testsPassed = 0,
-					testsFailed = 0,
-					module, moduleStart, testStart, testCases = [],
-					current_test_assertions = [],
-					junitxml = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n';
 				QUnit.testStart(function() {
-					testStart = new Date();
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.testStart',
+							'testStart': new Date()
+						});
+					}
 				});
 	
 				QUnit.moduleStart(function(context) {
-					moduleStart = new Date();
-					module = context.name;
-					testCases = [];
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.moduleStart',
+							'moduleStart': new Date(),
+							'module': context.name
+						});
+					}
 				});
 	
 				QUnit.moduleDone(function(context) {
-					// context = { name, failed, passed, total }
-					var xml = '\t<testsuite name="' + context.name + '" errors="0" failures="' + context.failed + '" tests="' + context.total + '" time="' + (new Date() - moduleStart) / 1000 + '"';
-					if (testCases.length) {
-						xml += '>\n';
-						for (var i = 0, l = testCases.length; i < l; i++) {
-							xml += testCases[i];
-						}
-						xml += '\t</testsuite>\n';
-					} else {
-						xml += '/>\n';
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.moduleDone',
+							'context': context,
+							'now': new Date() 
+						});
 					}
-					junitxml += xml;
 				});
 	
 				QUnit.testDone(function(result) {
-					if (0 === result.failed) {
-						testsPassed++;
-					} else {
-						testsFailed++;
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.testDone',
+							'result': result,
+							'now': new Date()
+						});
 					}
-	
-					console.log('\t' + result.name + ' completed - ' + (0 === result.failed ? 'PASS' : 'FAIL ***'));
-					
-					var xml = '\t\t<testcase classname="' + module + '" name="' + result.name + '" time="' + (new Date() - testStart) / 1000 + '"';
-					if (result.failed) {
-						xml += '>\n';
-						for (var i = 0; i < current_test_assertions.length; i++) {
-							xml += "\t\t\t" + current_test_assertions[i];
-						}
-						xml += '\t\t</testcase>\n';
-					} else {
-						xml += '/>\n';
-					}
-					current_test_assertions = [];
-	
-					testCases.push(xml);
-	
 				});
 	
 				QUnit.done(function(result) {
-					console.log(testsPassed + ' of ' + (testsPassed + testsFailed) + ' tests successful.');
-					console.log('==== TEST RUN COMPLETED - ' + (0 === testsFailed ? 'PASS' : 'FAIL') + '===');
-
-					junitxml += '</testsuites>';
-					
 					if (typeof window.callPhantom === 'function') {
 						window.callPhantom({
 							'name':'QUnit.done',
-							'data': result,
-							'report': junitxml
+							'data': result
 						});
 					}
 				});
 	
 				QUnit.log = function(details) {
-					//details = { result , actual, expected, message }
 					if (details.result) {
 						return;
 					}
-					var message = details.message || "";
-					if (details.expected) {
-						if (message) {
-							message += ", ";
-						}
-						message = "expected: " + details.expected + ", but was: " + details.actual;
+					
+					if (typeof window.callPhantom === 'function') {
+						window.callPhantom({
+							'name':'QUnit.log',
+							'details': details
+						});
 					}
-					var xml = '<failure type="failed" message="' + details.message.replace(/ - \{((.|\n)*)\}/, "") + '"/>\n';
-	
-					current_test_assertions.push(xml);
 				};
 			}, false);
 		};
@@ -133,25 +132,96 @@
 		page.evaluate(addLogging);
 	};
 
-	page.onCallback = function(message) {
-		var result,
-			report,
-			failed;
+	var escapeXml = function(value) {
+		var escapedValue = value.replace(/&/g, '&amp;')
+        						.replace(/</g, '&lt;')
+        						.replace(/>/g, '&gt;')
+        						.replace(/"/g, '&quot;');
+		return escapedValue;
+	}
 
+	var testsPassed = 0,
+		testsFailed = 0,
+		module, moduleStart, testStart, testCases = [],
+		current_test_assertions = [],
+		junitxml = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n';
+	
+	page.onCallback = function(message) {	
 		if (message) {
-			if (message.name === 'QUnit.done') {
-				result = message.data;
-				report = message.report;
-				failed = !result || result.failed;
+			if (message.name === 'QUnit.moduleStart') {
+				testCases = [];
+				module = escapeXml(message.module);
+				moduleStart = message.moduleStart;
+			} else if (message.name === 'QUnit.testStart') {
+				testStart = message.testStart;
+			} else if (message.name === 'QUnit.log') {
+				var detailsMessage = message.details.message || "";
+				if (message.details.expected) {
+					if (detailsMessage) {
+						detailsMessage += ", ";
+					}
+					detailsMessage = "expected: " + message.details.expected + ", but was: " + message.details.actual;
+				}
+				var xml = '<failure type="failed" message="' + detailsMessage.replace(/ - \{((.|\n)*)\}/, "") + '"/>\n';
 
+				current_test_assertions.push(xml);
+			} else if (message.name === 'QUnit.testDone') {
+				if (0 === message.result.failed) {
+					testsPassed++;
+				} else {
+					testsFailed++;
+				}
+				console.log('\t' + message.result.name + ' completed - ' + (0 === message.result.failed ? 'PASS' : 'FAIL ***'));
+				
+				var xml = '\t\t<testcase classname="' + escapedUrl + '" name="' + escapeXml(message.result.name) + '" time="' + (message.now - testStart) / 1000 + '"';
+				if (message.result.failed) {
+					xml += '>\n';
+					for (var i = 0; i < current_test_assertions.length; i++) {
+						xml += "\t\t\t" + current_test_assertions[i];
+					}
+					xml += '\t\t</testcase>\n';
+				} else {
+					xml += '/>\n';
+				}
+				current_test_assertions = [];
 
-				var fileName = "../../../build/web-test-reports/" + url.replace(/\//g,'_').replace(/:/g,'_') + '.xml';
-				fs.write(fileName, report, "w");
+				testCases.push(xml);
+			} else if (message.name === 'QUnit.moduleDone') {
+				var xml = '\t<testsuite name="' + module + '" errors="0" failures="' + message.context.failed + '" tests="' + message.context.total + '" time="' + (message.now - moduleStart) / 1000 + '"';
+				
+				if (testCases.length) {
+					xml += '>\n';
+					for (var i = 0, l = testCases.length; i < l; i++) {
+						xml += testCases[i];
+					}
+					xml += '\t</testsuite>\n';
+				} else {
+					xml += '/>\n';
+				}
+				
+				junitxml += xml;
+			} else if (message.name === 'QUnit.done') {
+				console.log(testsPassed + ' of ' + (testsPassed + testsFailed) + ' tests successful.');
+				console.log('==== TEST RUN COMPLETED - ' + (0 === testsFailed ? 'PASS' : 'FAIL') + '===');
+				
+				var result = message.data,
+					failed = !result || result.failed;
 
+				junitxml += '</testsuites>';
+				
+				fs.write(fileName, junitxml, "w");
 				
 				phantom.exit(failed ? 1 : 0);
 			}
 		}
+	};
+
+	page.onAlert = function(msg) {
+	    	console.log('ALERT MESSAGE RECEIVED: ' + msg);
+	};
+	
+	page.onClosing = function(closingPage) {
+    		console.log('CLOSING URL: ' + closingPage.url);
 	};
 
 	page.open(url, function(status) {
@@ -171,6 +241,8 @@
 			if (typeof timeout === 'number') {
 				setTimeout(function() {
 					console.error('The specified timeout of ' + timeout + ' seconds has expired. Aborting...');
+					var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="' + timeout + '">\n<testcase classname="' + escapedUrl + '" name="test timed out" time="' + timeout + '">\n<failure type="failed" message="Test suite timed out, see console logs for details"/>\n</testcase>\n</testsuite>\n</testsuites>';
+					fs.write(fileName, report, "w");
 					phantom.exit(1);
 				}, timeout * 1000);
 			}
