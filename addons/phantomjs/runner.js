@@ -30,12 +30,13 @@
 	var escapedUrl = url.replace(/\//g,'_').replace(/:/g,'_') + '.xml';
 	var fileName = "../../../build/web-test-reports/" + escapedUrl;
 
-	console.log("\n\n==================================================================================\nSTARTING TESTS FOR - " + url);
-	
+	console.log("==================================================================================\nSTARTING TESTS FOR - " + url);
 	page = require('webpage').create();
 	if (args[2] !== undefined) {
 		timeout = parseInt(args[2], 10);
+		console.log('timeout set to ' + timeout);
 	}
+	console.log("==================================================================================\n\n");
 
 	page.onConsoleMessage = function(msg, lineNum, sourceId) {
 		console.log("> " + msg);
@@ -66,10 +67,11 @@
 	page.onInitialized = function() {
 		var addLogging = function() {
 			window.document.addEventListener('DOMContentLoaded', function() {
-				QUnit.testStart(function() {
+				QUnit.testStart(function(details) {
 					if (typeof window.callPhantom === 'function') {
 						window.callPhantom({
 							'name':'QUnit.testStart',
+							'details': details,
 							'testStart': new Date()
 						});
 					}
@@ -142,7 +144,7 @@
 
 	var testsPassed = 0,
 		testsFailed = 0,
-		module, moduleStart, testStart, testCases = [],
+		suiteStart = new Date(), module, moduleStart, testStart, testCases = [],
 		current_test_assertions = [],
 		junitxml = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n';
 	
@@ -154,6 +156,8 @@
 				moduleStart = message.moduleStart;
 			} else if (message.name === 'QUnit.testStart') {
 				testStart = message.testStart;
+
+				console.log('\t' + message.details.module + ' - ' + message.details.name + ' running... ');
 			} else if (message.name === 'QUnit.log') {
 				var detailsMessage = message.details.message || "";
 				if (message.details.expected) {
@@ -162,7 +166,7 @@
 					}
 					detailsMessage = "expected: " + message.details.expected + ", but was: " + message.details.actual;
 				}
-				var xml = '<failure type="failed" message="' + detailsMessage.replace(/ - \{((.|\n)*)\}/, "") + '"/>\n';
+				var xml = '<failure type="failed" message="' + escapeXml(detailsMessage.replace(/ - \{((.|\n)*)\}/, "")) + '"/>\n';
 
 				current_test_assertions.push(xml);
 			} else if (message.name === 'QUnit.testDone') {
@@ -171,9 +175,15 @@
 				} else {
 					testsFailed++;
 				}
-				console.log('\t' + message.result.name + ' completed - ' + (0 === message.result.failed ? 'PASS' : 'FAIL ***'));
+
+				var timeInSeconds = (message.now - testStart) / 1000.0;
+				console.log('\t' + message.result.module + ' - ' + message.result.name + ' - Duration: ' + timeInSeconds + ' seconds - ' + (0 === message.result.failed ? 'PASSED' : 'FAILED *********************'));
+
+				if (timeInSeconds > 10) {
+					console.log('WARNING: LONG RUNNING TEST');
+				}
 				
-				var xml = '\t\t<testcase classname="' + escapedUrl + '" name="' + escapeXml(message.result.name) + '" time="' + (message.now - testStart) / 1000 + '"';
+				var xml = '\t\t<testcase classname="' + escapedUrl + '" name="' + escapeXml(message.result.name) + '" time="' + timeInSeconds + '"';
 				if (message.result.failed) {
 					xml += '>\n';
 					for (var i = 0; i < current_test_assertions.length; i++) {
@@ -202,7 +212,8 @@
 				junitxml += xml;
 			} else if (message.name === 'QUnit.done') {
 				console.log(testsPassed + ' of ' + (testsPassed + testsFailed) + ' tests successful.');
-				console.log('==== TEST RUN COMPLETED - ' + (0 === testsFailed ? 'PASS' : 'FAIL') + '===');
+				console.log('Duration: ' + (new Date() - suiteStart) / 1000 + ' seconds');
+				console.log('==== TEST RUN COMPLETED - ' + (0 === testsFailed ? 'SUCCESSFUL' : 'FAILURE') + '\n\n');
 				
 				var result = message.data,
 					failed = !result || result.failed;
@@ -228,7 +239,7 @@
 		if (status !== 'success') {
 			console.error('Unable to access network: ' + status);
 			
-			var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<failure type="failed" message="Network error, web application is not accessible."/>\n</testcase>\n</testsuite>\n</testsuites>';
+			var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="1" failures="0" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<error type="Network Error" message="Web application is not accessible."/>\n</testcase>\n</testsuite>\n</testsuites>';
 			fs.write(fileName, report, "w");
 			
 			phantom.exit(1);
@@ -239,7 +250,7 @@
 			if (qunitMissing) {
 				console.error('The `QUnit` object is not present on this page.');
 				
-				var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<failure type="failed" message="QUnit error, web application does not have a QUnit object.  Check whether the URL is pointed to a QUnit test."/>\n</testcase>\n</testsuite>\n</testsuites>';
+				var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="1" failures="0" tests="1" time="1">\n<testcase classname="' + escapedUrl + '" name="Test Suite Error" time="1">\n<error type="QUnit application" message="Web application does not have a QUnit object.  Check whether the URL is pointed to a QUnit test."/>\n</testcase>\n</testsuite>\n</testsuites>';
 				fs.write(fileName, report, "w");
 				
 				phantom.exit(1);
@@ -249,7 +260,7 @@
 			if (typeof timeout === 'number') {
 				setTimeout(function() {
 					console.error('The specified timeout of ' + timeout + ' seconds has expired. Aborting...');
-					var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="0" failures="1" tests="1" time="' + timeout + '">\n<testcase classname="' + escapedUrl + '" name="Test Suite Timed Out" time="' + timeout + '">\n<failure type="failed" message="Test suite timed out, see console logs for details"/>\n</testcase>\n</testsuite>\n</testsuites>';
+					var report = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="testsuites">\n<testsuite name="' + escapedUrl + '" errors="1" failures="0" tests="1" time="' + timeout + '">\n<testcase classname="' + escapedUrl + '" name="Test Suite Timed Out" time="' + timeout + '">\n<error type="Time Out Error" message="See console logs for details"/>\n</testcase>\n</testsuite>\n</testsuites>';
 					fs.write(fileName, report, "w");
 					phantom.exit(1);
 				}, timeout * 1000);
